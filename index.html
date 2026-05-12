@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<title>ID/KEY 写入工具</title>
+<style>
+* { box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", Arial, sans-serif;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 15px;
+    background: #1a1a2e;
+    color: #eee;
+}
+h1 { color: #88ccff; text-align: center; font-size: 22px; }
+h3 { color: #ffcc44; margin: 10px 0 5px; }
+
+.card {
+    background: #16213e;
+    border-radius: 8px;
+    padding: 12px;
+    margin: 10px 0;
+}
+
+label { display: block; margin: 8px 0 4px; color: #aaa; font-size: 14px; }
+
+input[type=text], select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #444;
+    border-radius: 4px;
+    background: #0f3460;
+    color: #fff;
+    font-size: 15px;
+}
+
+button {
+    background: #00cc66;
+    color: #000;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    margin: 5px 5px 5px 0;
+    width: 100%;
+}
+button:hover { background: #00ff88; }
+button:disabled { background: #555; color: #999; cursor: not-allowed; }
+button.secondary { background: #ff8844; color: #fff; }
+button.danger { background: #ff4444; color: #fff; }
+
+#video {
+    width: 100%;
+    border-radius: 8px;
+    background: #000;
+    max-height: 400px;
+}
+#canvas { display: none; }
+
+.status {
+    padding: 10px;
+    border-radius: 4px;
+    background: #0f3460;
+    margin-top: 8px;
+    font-size: 14px;
+    word-break: break-all;
+}
+.ok { color: #44ff44; }
+.err { color: #ff4444; }
+.info { color: #ffcc44; }
+
+.hex {
+    font-family: monospace;
+    word-break: break-all;
+    color: #88ddff;
+}
+
+.step-num {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    background: #88ccff;
+    color: #000;
+    border-radius: 50%;
+    text-align: center;
+    line-height: 22px;
+    font-weight: bold;
+    margin-right: 5px;
+}
+</style>
+</head>
+<body>
+
+<h1>设备 ID/KEY 写入工具</h1>
+
+<div class='card'>
+<h3><span class='step-num'>1</span>ESP32 工具 IP</h3>
+<label>请输入或确认 ESP32 屏幕显示的 IP:</label>
+<input type='text' id='esp_ip' placeholder='例如 192.168.43.142' value=''>
+<button onclick='testConnection()'>测试连接</button>
+<div id='conn_status' class='status'>未测试</div>
+</div>
+
+<div class='card'>
+<h3><span class='step-num'>2</span>扫描设备二维码</h3>
+<video id='video' autoplay playsinline></video>
+<canvas id='canvas'></canvas>
+<button id='startScanBtn' onclick='startScan()'>开始扫描</button>
+<button id='stopScanBtn' onclick='stopScan()' class='danger' style='display:none;'>停止扫描</button>
+<div id='scan_status' class='status'>等待扫描</div>
+<label style='margin-top:8px;'>或手动输入 ID (16个 hex 字符):</label>
+<input type='text' id='manual_id' placeholder='例如 0123456789ABCDEF'>
+<button onclick='useManualId()' class='secondary'>使用手动 ID</button>
+</div>
+
+<div class='card'>
+<h3><span class='step-num'>3</span>从服务器获取 KEY</h3>
+<p>设备 ID: <span id='show_id' class='hex'>--</span></p>
+<button id='fetchKeyBtn' onclick='fetchKey()' disabled>获取 KEY</button>
+<p>对应 KEY: <span id='show_key' class='hex'>--</span></p>
+</div>
+
+<div class='card'>
+<h3><span class='step-num'>4</span>发送给 ESP32</h3>
+<button id='sendBtn' onclick='sendToEsp()' disabled>发送 ID + KEY 给 ESP32</button>
+<div id='send_status' class='status'>等待发送</div>
+<p style='color:#aaa;font-size:13px;'>发送成功后，请按 ESP32 上的 START 按钮启动写入。</p>
+</div>
+
+<!-- jsQR 库 -->
+<script src='https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'></script>
+
+<script>
+// ============ 配置 ============
+// Sylver Lining 测试服务器 — 根据 ubilinkId 获取 ubilink_key
+// 例如: GET http://.../device/key/D51C3D29045B83ED
+// 响应: {"code":0,"msg":"success","data":{"ubilink_key":"B44240C74D0BA210473F73FB08D57CDC"}}
+const KEY_API_BASE = 'http://sylver-lining-open-platform-prod.us-west-1.elasticbeanstalk.com/device/key/';
+
+// 注意：API 是 HTTP（不是 HTTPS）。如果本页面通过 HTTPS 打开，浏览器会拒绝
+// "混合内容" 调用。建议本页面也用 HTTP 部署，或者请后端启用 HTTPS。
+
+// ============ 全局状态 ============
+let currentId = null;
+let currentKey = null;
+let videoStream = null;
+let scanning = false;
+
+// 从 URL 参数获取 IP，例如 ?ip=192.168.43.142
+const params = new URLSearchParams(location.search);
+if (params.get('ip')) {
+    document.getElementById('esp_ip').value = params.get('ip');
+}
+
+// ============ Step 1: 测试连接 ============
+async function testConnection() {
+    const ip = document.getElementById('esp_ip').value.trim();
+    const el = document.getElementById('conn_status');
+    if (!ip) { el.textContent = '请填写 IP'; el.className = 'status err'; return; }
+    el.textContent = '连接中...';
+    el.className = 'status info';
+    try {
+        const resp = await fetch(`http://${ip}/status`, { method: 'GET', mode: 'cors' });
+        if (resp.ok) {
+            el.textContent = '已连接到 ESP32: ' + ip;
+            el.className = 'status ok';
+        } else {
+            el.textContent = '连接失败: HTTP ' + resp.status;
+            el.className = 'status err';
+        }
+    } catch (e) {
+        el.textContent = '连接失败: ' + e.message + ' (请检查 IP 和网络)';
+        el.className = 'status err';
+    }
+}
+
+// ============ Step 2: 扫码 ============
+async function startScan() {
+    const video = document.getElementById('video');
+    try {
+        videoStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment' }
+        });
+        video.srcObject = videoStream;
+        scanning = true;
+        document.getElementById('startScanBtn').style.display = 'none';
+        document.getElementById('stopScanBtn').style.display = 'block';
+        requestAnimationFrame(scanLoop);
+    } catch (e) {
+        document.getElementById('scan_status').textContent = '相机错误: ' + e.message;
+        document.getElementById('scan_status').className = 'status err';
+    }
+}
+
+function stopScan() {
+    scanning = false;
+    if (videoStream) {
+        videoStream.getTracks().forEach(t => t.stop());
+        videoStream = null;
+    }
+    document.getElementById('startScanBtn').style.display = 'block';
+    document.getElementById('stopScanBtn').style.display = 'none';
+}
+
+function scanLoop() {
+    if (!scanning) return;
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imgData.data, canvas.width, canvas.height, { inversionAttempts: 'dontInvert' });
+        if (code && code.data) {
+            onScanned(code.data);
+            return;
+        }
+    }
+    requestAnimationFrame(scanLoop);
+}
+
+function onScanned(data) {
+    stopScan();
+    const id = normalizeId(data);
+    if (id) {
+        setScannedId(id);
+    } else {
+        document.getElementById('scan_status').textContent = '识别到内容但格式不对: ' + data;
+        document.getElementById('scan_status').className = 'status err';
+    }
+}
+
+// 把任意输入归一化为 16 字符的 hex ID（去除空格冒号连字符），转大写
+function normalizeId(s) {
+    if (!s) return null;
+    const clean = s.replace(/[\s:\-]/g, '').toUpperCase();
+    if (/^[0-9A-F]{16}$/.test(clean)) return clean;
+    return null;
+}
+
+function setScannedId(id) {
+    currentId = id;
+    document.getElementById('show_id').textContent = id;
+    document.getElementById('scan_status').textContent = '已识别 ID: ' + id;
+    document.getElementById('scan_status').className = 'status ok';
+    document.getElementById('fetchKeyBtn').disabled = false;
+}
+
+function useManualId() {
+    const v = document.getElementById('manual_id').value.trim();
+    const id = normalizeId(v);
+    if (!id) {
+        document.getElementById('scan_status').textContent = 'ID 格式不对（需要 16 个 hex 字符）';
+        document.getElementById('scan_status').className = 'status err';
+        return;
+    }
+    setScannedId(id);
+}
+
+// ============ Step 3: 获取 KEY ============
+async function fetchKey() {
+    if (!currentId) return;
+    const el = document.getElementById('show_key');
+    el.textContent = '查询中...';
+    try {
+        const resp = await fetch(KEY_API_BASE + currentId, { method: 'GET' });
+        if (!resp.ok) {
+            throw new Error('HTTP ' + resp.status);
+        }
+        const json = await resp.json();
+        console.log('API response:', json);  // 浏览器控制台可看完整响应
+
+        // 服务器返回格式: {"code":0,"msg":"success","data":{"ubilink_key":"..."}}
+        if (json.code !== 0)
+        {
+            throw new Error('服务器返回 code=' + json.code + ' msg=' + (json.msg || ''));
+        }
+        const key = json.data && json.data.ubilink_key;
+        if (!key)
+        {
+            el.innerHTML = '未找到 ubilink_key 字段。响应:<br><pre style="font-size:11px;color:#aaa;max-height:200px;overflow:auto;">' +
+                JSON.stringify(json, null, 2) + '</pre>';
+            return;
+        }
+        const normKey = key.replace(/[\s:\-]/g, '').toUpperCase();
+        if (!/^[0-9A-F]{32}$/.test(normKey)) {
+            throw new Error('KEY 格式不对（需要 32 个 hex 字符），收到: ' + key);
+        }
+        currentKey = normKey;
+        el.textContent = normKey;
+        document.getElementById('sendBtn').disabled = false;
+    } catch (e) {
+        el.textContent = '失败: ' + e.message;
+    }
+}
+
+// ============ Step 4: 发送到 ESP32 ============
+async function sendToEsp() {
+    const ip = document.getElementById('esp_ip').value.trim();
+    if (!ip) { alert('请先填 ESP32 IP'); return; }
+    if (!currentId || !currentKey) { alert('ID 或 KEY 未准备好'); return; }
+
+    const el = document.getElementById('send_status');
+    el.textContent = '发送中...';
+    el.className = 'status info';
+
+    const data = new URLSearchParams();
+    data.append('id',  currentId);
+    data.append('key', currentKey);
+
+    try {
+        const resp = await fetch(`http://${ip}/writeIdKey`, {
+            method: 'POST',
+            body: data,
+            mode: 'cors'
+        });
+        const json = await resp.json();
+        if (json.ok) {
+            el.innerHTML = '<b>已发送！</b><br>请按 ESP32 屏幕上的 START 按钮启动写入。';
+            el.className = 'status ok';
+        } else {
+            el.textContent = '失败: ' + (json.err || '未知错误');
+            el.className = 'status err';
+        }
+    } catch (e) {
+        el.textContent = '发送失败: ' + e.message;
+        el.className = 'status err';
+    }
+}
+</script>
+
+</body>
+</html>
