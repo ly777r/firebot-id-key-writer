@@ -1,13 +1,13 @@
 <!DOCTYPE html>
-<html lang='zh-CN'>
+<html lang='en'>
 <head>
 <meta charset='UTF-8'>
 <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-<title>ID/KEY 写入工具</title>
+<title>ID/KEY Writer</title>
 <style>
 * { box-sizing: border-box; }
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", Arial, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif;
     max-width: 480px;
     margin: 0 auto;
     padding: 15px;
@@ -94,91 +94,109 @@ button.danger { background: #ff4444; color: #fff; }
 </head>
 <body>
 
-<h1>设备 ID/KEY 写入工具</h1>
+<h1>Device ID/KEY Writer</h1>
 
 <div class='card'>
-<h3><span class='step-num'>1</span>ESP32 工具 IP</h3>
-<label>请输入或确认 ESP32 屏幕显示的 IP:</label>
-<input type='text' id='esp_ip' placeholder='例如 192.168.43.142' value=''>
-<button onclick='testConnection()'>测试连接</button>
-<div id='conn_status' class='status'>未测试</div>
+<h3><span class='step-num'>1</span>ESP32 Tool IP</h3>
+<label>Enter or confirm the IP shown on the ESP32 screen:</label>
+<input type='text' id='esp_ip' placeholder='e.g. 192.168.43.142' value=''>
+<button onclick='testConnection()'>Test Connection</button>
+<div id='conn_status' class='status'>Not tested</div>
 </div>
 
 <div class='card'>
-<h3><span class='step-num'>2</span>扫描设备二维码</h3>
+<h3><span class='step-num'>2</span>Scan Device QR Code</h3>
 <video id='video' autoplay playsinline></video>
 <canvas id='canvas'></canvas>
-<button id='startScanBtn' onclick='startScan()'>开始扫描</button>
-<button id='stopScanBtn' onclick='stopScan()' class='danger' style='display:none;'>停止扫描</button>
-<div id='scan_status' class='status'>等待扫描</div>
-<label style='margin-top:8px;'>或手动输入 ID (16个 hex 字符):</label>
-<input type='text' id='manual_id' placeholder='例如 0123456789ABCDEF'>
-<button onclick='useManualId()' class='secondary'>使用手动 ID</button>
+<button id='startScanBtn' onclick='startScan()'>Start Scan</button>
+<button id='stopScanBtn' onclick='stopScan()' class='danger' style='display:none;'>Stop Scan</button>
+<div id='scan_status' class='status'>Waiting to scan</div>
+<label style='margin-top:8px;'>Or enter ID manually (16 hex chars):</label>
+<input type='text' id='manual_id' placeholder='e.g. 0123456789ABCDEF'>
+<button onclick='useManualId()' class='secondary'>Use Manual ID</button>
 </div>
 
 <div class='card'>
-<h3><span class='step-num'>3</span>从服务器获取 KEY</h3>
-<p>设备 ID: <span id='show_id' class='hex'>--</span></p>
-<button id='fetchKeyBtn' onclick='fetchKey()' disabled>获取 KEY</button>
-<p>对应 KEY: <span id='show_key' class='hex'>--</span></p>
+<h3><span class='step-num'>3</span>Fetch KEY from Server</h3>
+<p>Device ID: <span id='show_id' class='hex'>--</span></p>
+<button id='fetchKeyBtn' onclick='fetchKey()' disabled>Fetch KEY</button>
+<p>KEY: <span id='show_key' class='hex'>--</span></p>
 </div>
 
 <div class='card'>
-<h3><span class='step-num'>4</span>发送给 ESP32</h3>
-<button id='sendBtn' onclick='sendToEsp()' disabled>发送 ID + KEY 给 ESP32</button>
-<div id='send_status' class='status'>等待发送</div>
-<p style='color:#aaa;font-size:13px;'>发送成功后，请按 ESP32 上的 START 按钮启动写入。</p>
+<h3><span class='step-num'>4</span>Send to ESP32</h3>
+<button id='sendBtn' onclick='sendToEsp()' disabled>Send ID + KEY to ESP32</button>
+<div id='send_status' class='status'>Waiting to send</div>
+<p style='color:#aaa;font-size:13px;'>After sending, press the START button on the ESP32 to begin writing.</p>
 </div>
 
-<!-- jsQR 库 -->
+<!-- jsQR library -->
 <script src='https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'></script>
 
 <script>
-// ============ 配置 ============
-// Sylver Lining 测试服务器 — 根据 ubilinkId 获取 ubilink_key
-// 例如: GET http://.../device/key/D51C3D29045B83ED
-// 响应: {"code":0,"msg":"success","data":{"ubilink_key":"B44240C74D0BA210473F73FB08D57CDC"}}
+// ============ Config ============
+// Sylver Lining server: GET /device/key/{ubilinkId}
+// Response: {"code":0,"msg":"success","data":{"ubilink_key":"..."}}
 const KEY_API_BASE = 'http://sylver-lining-open-platform-prod.us-west-1.elasticbeanstalk.com/device/key/';
 
-// 注意：API 是 HTTP（不是 HTTPS）。如果本页面通过 HTTPS 打开，浏览器会拒绝
-// "混合内容" 调用。建议本页面也用 HTTP 部署，或者请后端启用 HTTPS。
+// Note: API is HTTP. If this page is HTTPS, the browser may block "mixed content".
+// To allow it: chrome://flags/#unsafely-treat-insecure-origin-as-secure
+// and add both the API origin and the ESP32 IP origin.
 
-// ============ 全局状态 ============
+// ============ Global state ============
 let currentId = null;
 let currentKey = null;
 let videoStream = null;
 let scanning = false;
 
-// 从 URL 参数获取 IP，例如 ?ip=192.168.43.142
+// Pre-fill IP from ?ip= URL param
 const params = new URLSearchParams(location.search);
 if (params.get('ip')) {
     document.getElementById('esp_ip').value = params.get('ip');
 }
 
-// ============ Step 1: 测试连接 ============
+// Reset all previous scan and query results
+function resetAllResults() {
+    currentId = null;
+    currentKey = null;
+    document.getElementById('show_id').textContent = '--';
+    document.getElementById('show_key').textContent = '--';
+    document.getElementById('manual_id').value = '';
+    document.getElementById('scan_status').textContent = 'Scanning...';
+    document.getElementById('scan_status').className = 'status info';
+    document.getElementById('fetchKeyBtn').disabled = true;
+    document.getElementById('sendBtn').disabled = true;
+    document.getElementById('send_status').textContent = 'Waiting to send';
+    document.getElementById('send_status').className = 'status';
+}
+
+// ============ Step 1: Test connection ============
 async function testConnection() {
     const ip = document.getElementById('esp_ip').value.trim();
     const el = document.getElementById('conn_status');
-    if (!ip) { el.textContent = '请填写 IP'; el.className = 'status err'; return; }
-    el.textContent = '连接中...';
+    if (!ip) { el.textContent = 'Please enter IP'; el.className = 'status err'; return; }
+    el.textContent = 'Connecting...';
     el.className = 'status info';
     try {
         const resp = await fetch(`http://${ip}/status`, { method: 'GET', mode: 'cors' });
         if (resp.ok) {
-            el.textContent = '已连接到 ESP32: ' + ip;
+            el.textContent = 'Connected to ESP32: ' + ip;
             el.className = 'status ok';
         } else {
-            el.textContent = '连接失败: HTTP ' + resp.status;
+            el.textContent = 'Failed: HTTP ' + resp.status;
             el.className = 'status err';
         }
     } catch (e) {
-        el.textContent = '连接失败: ' + e.message + ' (请检查 IP 和网络)';
+        el.textContent = 'Failed: ' + e.message + ' (check IP and network)';
         el.className = 'status err';
     }
 }
 
-// ============ Step 2: 扫码 ============
+// ============ Step 2: Scan QR ============
 async function startScan() {
+    // Clear previous scan results each time camera starts
+    resetAllResults();
+
     const video = document.getElementById('video');
     try {
         videoStream = await navigator.mediaDevices.getUserMedia({
@@ -190,7 +208,7 @@ async function startScan() {
         document.getElementById('stopScanBtn').style.display = 'block';
         requestAnimationFrame(scanLoop);
     } catch (e) {
-        document.getElementById('scan_status').textContent = '相机错误: ' + e.message;
+        document.getElementById('scan_status').textContent = 'Camera error: ' + e.message;
         document.getElementById('scan_status').className = 'status err';
     }
 }
@@ -230,12 +248,12 @@ function onScanned(data) {
     if (id) {
         setScannedId(id);
     } else {
-        document.getElementById('scan_status').textContent = '识别到内容但格式不对: ' + data;
+        document.getElementById('scan_status').textContent = 'Got content but bad format: ' + data;
         document.getElementById('scan_status').className = 'status err';
     }
 }
 
-// 把任意输入归一化为 16 字符的 hex ID（去除空格冒号连字符），转大写
+// Normalize input to 16-char hex ID (strip spaces/colons/hyphens), uppercase
 function normalizeId(s) {
     if (!s) return null;
     const clean = s.replace(/[\s:\-]/g, '').toUpperCase();
@@ -246,67 +264,73 @@ function normalizeId(s) {
 function setScannedId(id) {
     currentId = id;
     document.getElementById('show_id').textContent = id;
-    document.getElementById('scan_status').textContent = '已识别 ID: ' + id;
+    document.getElementById('scan_status').textContent = 'ID scanned: ' + id;
     document.getElementById('scan_status').className = 'status ok';
     document.getElementById('fetchKeyBtn').disabled = false;
+    // Clear previous KEY and send status
+    currentKey = null;
+    document.getElementById('show_key').textContent = '--';
+    document.getElementById('sendBtn').disabled = true;
+    document.getElementById('send_status').textContent = 'Waiting to send';
+    document.getElementById('send_status').className = 'status';
 }
 
 function useManualId() {
     const v = document.getElementById('manual_id').value.trim();
     const id = normalizeId(v);
     if (!id) {
-        document.getElementById('scan_status').textContent = 'ID 格式不对（需要 16 个 hex 字符）';
+        document.getElementById('scan_status').textContent = 'Bad ID format (need 16 hex chars)';
         document.getElementById('scan_status').className = 'status err';
         return;
     }
     setScannedId(id);
 }
 
-// ============ Step 3: 获取 KEY ============
+// ============ Step 3: Fetch KEY ============
 async function fetchKey() {
     if (!currentId) return;
     const el = document.getElementById('show_key');
-    el.textContent = '查询中...';
+    el.textContent = 'Querying...';
     try {
         const resp = await fetch(KEY_API_BASE + currentId, { method: 'GET' });
         if (!resp.ok) {
             throw new Error('HTTP ' + resp.status);
         }
         const json = await resp.json();
-        console.log('API response:', json);  // 浏览器控制台可看完整响应
+        console.log('API response:', json);
 
-        // 服务器返回格式: {"code":0,"msg":"success","data":{"ubilink_key":"..."}}
+        // Server format: {"code":0,"msg":"success","data":{"ubilink_key":"..."}}
         if (json.code !== 0)
         {
-            throw new Error('服务器返回 code=' + json.code + ' msg=' + (json.msg || ''));
+            throw new Error('Server returned code=' + json.code + ' msg=' + (json.msg || ''));
         }
         const key = json.data && json.data.ubilink_key;
         if (!key)
         {
-            el.innerHTML = '未找到 ubilink_key 字段。响应:<br><pre style="font-size:11px;color:#aaa;max-height:200px;overflow:auto;">' +
+            el.innerHTML = 'No ubilink_key field. Response:<br><pre style="font-size:11px;color:#aaa;max-height:200px;overflow:auto;">' +
                 JSON.stringify(json, null, 2) + '</pre>';
             return;
         }
         const normKey = key.replace(/[\s:\-]/g, '').toUpperCase();
         if (!/^[0-9A-F]{32}$/.test(normKey)) {
-            throw new Error('KEY 格式不对（需要 32 个 hex 字符），收到: ' + key);
+            throw new Error('Bad KEY format (need 32 hex chars), got: ' + key);
         }
         currentKey = normKey;
         el.textContent = normKey;
         document.getElementById('sendBtn').disabled = false;
     } catch (e) {
-        el.textContent = '失败: ' + e.message;
+        el.textContent = 'Failed: ' + e.message;
     }
 }
 
-// ============ Step 4: 发送到 ESP32 ============
+// ============ Step 4: Send to ESP32 ============
 async function sendToEsp() {
     const ip = document.getElementById('esp_ip').value.trim();
-    if (!ip) { alert('请先填 ESP32 IP'); return; }
-    if (!currentId || !currentKey) { alert('ID 或 KEY 未准备好'); return; }
+    if (!ip) { alert('Please enter ESP32 IP first'); return; }
+    if (!currentId || !currentKey) { alert('ID or KEY not ready'); return; }
 
     const el = document.getElementById('send_status');
-    el.textContent = '发送中...';
+    el.textContent = 'Sending...';
     el.className = 'status info';
 
     const data = new URLSearchParams();
@@ -321,14 +345,14 @@ async function sendToEsp() {
         });
         const json = await resp.json();
         if (json.ok) {
-            el.innerHTML = '<b>已发送！</b><br>请按 ESP32 屏幕上的 START 按钮启动写入。';
+            el.innerHTML = '<b>Sent!</b><br>Press the START button on the ESP32 to begin writing.';
             el.className = 'status ok';
         } else {
-            el.textContent = '失败: ' + (json.err || '未知错误');
+            el.textContent = 'Failed: ' + (json.err || 'unknown error');
             el.className = 'status err';
         }
     } catch (e) {
-        el.textContent = '发送失败: ' + e.message;
+        el.textContent = 'Send failed: ' + e.message;
         el.className = 'status err';
     }
 }
