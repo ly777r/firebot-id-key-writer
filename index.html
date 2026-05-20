@@ -141,11 +141,7 @@ button.danger { background: #ff4444; color: #fff; }
 // ============ Config ============
 // Sylver Lining server: GET /device/key/{ubilinkId}
 // Response: {"code":0,"msg":"success","data":{"ubilink_key":"..."}}
-const KEY_API_BASE = 'http://sylver-lining-open-platform-prod.us-west-1.elasticbeanstalk.com/device/key/';
-
-// Note: API is HTTP. If this page is HTTPS, the browser may block "mixed content".
-// To allow it: chrome://flags/#unsafely-treat-insecure-origin-as-secure
-// and add both the API origin and the ESP32 IP origin.
+const KEY_API_BASE = 'https://open-platform-prod.sylver-lining.com/device/key/';
 
 // ============ Global state ============
 let currentId = null;
