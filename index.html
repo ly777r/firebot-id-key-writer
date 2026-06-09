@@ -85,7 +85,7 @@ button.danger { background: #ff4444; color: #fff; }
 
 <div class='card'>
 <h3><span class='step-num'>1</span>Tool Device ID</h3>
-<label>Scan the QR on the ESP32 screen (press BOOT on the tool), or type the 16-hex ID:</label>
+<label>Set once — remembered on this phone. Scan the QR on the ESP32 screen (press BOOT), or type the 16-hex ID:</label>
 <input type='text' id='device_id' placeholder='e.g. 0000A1B2C3D4E5F6'>
 <button onclick="startScan('device')" class='secondary' style='margin-top:8px;'>Scan Device ID QR</button>
 </div>
@@ -120,19 +120,22 @@ button.danger { background: #ff4444; color: #fff; }
 const BIND_API = 'https://open-platform-prod.sylver-lining.com/device/upgrade';
 
 // ============ State ============
+const DEV_CACHE_KEY = 'fb_device_id';
 let currentUid = null;
 let videoStream = null;
 let scanning = false;
 let scanTarget = 'ubilink';   // 'device' 或 'ubilink'
 
-// Pre-fill device_id from ?device= URL param (optional)
-const params = new URLSearchParams(location.search);
-if (params.get('device')) document.getElementById('device_id').value = params.get('device');
-
 function normalizeHex16(s) {
     if (!s) return null;
     const clean = s.replace(/[\s:\-]/g, '').toUpperCase();
     return /^[0-9A-F]{16}$/.test(clean) ? clean : null;
+}
+
+// 把有效的 deviceID 存入缓存
+function saveDeviceId() {
+    const dev = normalizeHex16(document.getElementById('device_id').value);
+    if (dev) localStorage.setItem(DEV_CACHE_KEY, dev);
 }
 
 function refreshShow() {
@@ -141,11 +144,35 @@ function refreshShow() {
     document.getElementById('show_uid').textContent = currentUid || '--';
     document.getElementById('uploadBtn').disabled = !(dev && currentUid);
 }
-document.getElementById('device_id').addEventListener('input', refreshShow);
+
+// 手动输入 deviceID：即时存缓存 + 刷新
+document.getElementById('device_id').addEventListener('input', function () {
+    saveDeviceId();
+    refreshShow();
+});
+
+// 初始化 deviceID：优先 URL ?device=，其次本地缓存
+(function initDeviceId() {
+    const p = new URLSearchParams(location.search).get('device');
+    const dev = p || localStorage.getItem(DEV_CACHE_KEY) || '';
+    document.getElementById('device_id').value = dev;
+    saveDeviceId();
+})();
+
+// 清除上一次的 ubilinkID + 上传状态（扫新产品前调用）
+function resetUbilink() {
+    currentUid = null;
+    document.getElementById('manual_id').value = '';
+    document.getElementById('show_uid').textContent = '--';
+    document.getElementById('upload_status').textContent = 'Waiting to upload';
+    document.getElementById('upload_status').className = 'status';
+    refreshShow();
+}
 
 // ============ Scan QR ============
 async function startScan(target) {
     scanTarget = target || 'ubilink';
+    if (scanTarget === 'ubilink') resetUbilink(); // 扫新 ubilinkID 前清掉旧的
     const video = document.getElementById('video');
     try {
         videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
@@ -195,6 +222,7 @@ function onScanned(data) {
     }
     if (scanTarget === 'device') {
         document.getElementById('device_id').value = hex;
+        saveDeviceId();
         document.getElementById('scan_status').textContent = 'Device ID scanned: ' + hex;
         document.getElementById('scan_status').className = 'status ok';
         refreshShow();
@@ -252,6 +280,9 @@ async function uploadToServer() {
         el.className = 'status err';
     }
 }
+
+// 启动时刷新一次（反映缓存的 deviceID）
+refreshShow();
 </script>
 
 </body>
