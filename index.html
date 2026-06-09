@@ -85,15 +85,16 @@ button.danger { background: #ff4444; color: #fff; }
 
 <div class='card'>
 <h3><span class='step-num'>1</span>Tool Device ID</h3>
-<label>Enter the Device ID shown at the bottom-right of the ESP32 tool screen (16 hex):</label>
+<label>Scan the QR on the ESP32 screen (press BOOT on the tool), or type the 16-hex ID:</label>
 <input type='text' id='device_id' placeholder='e.g. 0000A1B2C3D4E5F6'>
+<button onclick="startScan('device')" class='secondary' style='margin-top:8px;'>Scan Device ID QR</button>
 </div>
 
 <div class='card'>
 <h3><span class='step-num'>2</span>Scan Ubilink QR Code</h3>
 <video id='video' autoplay playsinline></video>
 <canvas id='canvas'></canvas>
-<button id='startScanBtn' onclick='startScan()'>Start Scan</button>
+<button id='startScanBtn' onclick="startScan('ubilink')">Start Scan</button>
 <button id='stopScanBtn' onclick='stopScan()' class='danger' style='display:none;'>Stop Scan</button>
 <div id='scan_status' class='status'>Waiting to scan</div>
 <label style='margin-top:8px;'>Or enter Ubilink ID manually (16 hex chars):</label>
@@ -122,6 +123,7 @@ const BIND_API = 'https://open-platform-prod.sylver-lining.com/device/upgrade';
 let currentUid = null;
 let videoStream = null;
 let scanning = false;
+let scanTarget = 'ubilink';   // 'device' 或 'ubilink'
 
 // Pre-fill device_id from ?device= URL param (optional)
 const params = new URLSearchParams(location.search);
@@ -142,7 +144,8 @@ function refreshShow() {
 document.getElementById('device_id').addEventListener('input', refreshShow);
 
 // ============ Scan QR ============
-async function startScan() {
+async function startScan(target) {
+    scanTarget = target || 'ubilink';
     const video = document.getElementById('video');
     try {
         videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
@@ -184,12 +187,19 @@ function scanLoop() {
 
 function onScanned(data) {
     stopScan();
-    const uid = normalizeHex16(data);
-    if (uid) {
-        setUid(uid);
-    } else {
+    const hex = normalizeHex16(data);
+    if (!hex) {
         document.getElementById('scan_status').textContent = 'Got content but bad format: ' + data;
         document.getElementById('scan_status').className = 'status err';
+        return;
+    }
+    if (scanTarget === 'device') {
+        document.getElementById('device_id').value = hex;
+        document.getElementById('scan_status').textContent = 'Device ID scanned: ' + hex;
+        document.getElementById('scan_status').className = 'status ok';
+        refreshShow();
+    } else {
+        setUid(hex);
     }
 }
 
