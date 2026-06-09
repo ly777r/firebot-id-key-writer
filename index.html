@@ -52,7 +52,7 @@ button:disabled { background: #555; color: #999; cursor: not-allowed; }
 button.secondary { background: #ff8844; color: #fff; }
 button.danger { background: #ff4444; color: #fff; }
 
-#video { width: 100%; border-radius: 8px; background: #000; max-height: 400px; }
+#video_dev, #video_uid { width: 100%; border-radius: 8px; background: #000; max-height: 400px; margin-top: 8px; }
 #canvas { display: none; }
 
 .status {
@@ -87,15 +87,17 @@ button.danger { background: #ff4444; color: #fff; }
 <h3><span class='step-num'>1</span>Tool Device ID</h3>
 <label>Set once — remembered on this phone. Scan the QR on the ESP32 screen (press BOOT), or type the 16-hex ID:</label>
 <input type='text' id='device_id' placeholder='e.g. 0000A1B2C3D4E5F6'>
-<button onclick="startScan('device')" class='secondary' style='margin-top:8px;'>Scan Device ID QR</button>
+<video id='video_dev' autoplay playsinline style='display:none;'></video>
+<button id='startDevBtn' onclick="startScan('device')" class='secondary' style='margin-top:8px;'>Scan Device ID QR</button>
+<button id='stopDevBtn' onclick='stopScan()' class='danger' style='display:none;'>Stop Scan</button>
 </div>
 
 <div class='card'>
 <h3><span class='step-num'>2</span>Scan Ubilink QR Code</h3>
-<video id='video' autoplay playsinline></video>
+<video id='video_uid' autoplay playsinline style='display:none;'></video>
 <canvas id='canvas'></canvas>
-<button id='startScanBtn' onclick="startScan('ubilink')">Start Scan</button>
-<button id='stopScanBtn' onclick='stopScan()' class='danger' style='display:none;'>Stop Scan</button>
+<button id='startUidBtn' onclick="startScan('ubilink')">Start Scan</button>
+<button id='stopUidBtn' onclick='stopScan()' class='danger' style='display:none;'>Stop Scan</button>
 <div id='scan_status' class='status'>Waiting to scan</div>
 <label style='margin-top:8px;'>Or enter Ubilink ID manually (16 hex chars):</label>
 <input type='text' id='manual_id' placeholder='e.g. 0308A7285EA480E7'>
@@ -170,17 +172,29 @@ function resetUbilink() {
 }
 
 // ============ Scan QR ============
+// 当前扫描所用的元素（deviceID 与 ubilinkID 各用自己的摄像头预览区）
+let cam = null;
+function camFor(target) {
+    return (target === 'device')
+        ? { video: 'video_dev', startBtn: 'startDevBtn', stopBtn: 'stopDevBtn' }
+        : { video: 'video_uid', startBtn: 'startUidBtn', stopBtn: 'stopUidBtn' };
+}
+
 async function startScan(target) {
     scanTarget = target || 'ubilink';
     if (scanTarget === 'ubilink') resetUbilink(); // 扫新 ubilinkID 前清掉旧的
-    const video = document.getElementById('video');
+    stopScan(); // 关掉可能在运行的另一个摄像头
+    cam = camFor(scanTarget);
+    const video = document.getElementById(cam.video);
     try {
         videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         video.srcObject = videoStream;
+        video.style.display = 'block';
         scanning = true;
-        document.getElementById('startScanBtn').style.display = 'none';
-        document.getElementById('stopScanBtn').style.display = 'block';
-        document.getElementById('scan_status').textContent = 'Scanning...';
+        document.getElementById(cam.startBtn).style.display = 'none';
+        document.getElementById(cam.stopBtn).style.display = 'block';
+        document.getElementById('scan_status').textContent =
+            'Scanning ' + (scanTarget === 'device' ? 'Device ID' : 'Ubilink ID') + '...';
         document.getElementById('scan_status').className = 'status info';
         requestAnimationFrame(scanLoop);
     } catch (e) {
@@ -192,13 +206,17 @@ async function startScan(target) {
 function stopScan() {
     scanning = false;
     if (videoStream) { videoStream.getTracks().forEach(t => t.stop()); videoStream = null; }
-    document.getElementById('startScanBtn').style.display = 'block';
-    document.getElementById('stopScanBtn').style.display = 'none';
+    if (cam) {
+        const v = document.getElementById(cam.video);
+        if (v) { v.style.display = 'none'; v.srcObject = null; }
+        document.getElementById(cam.startBtn).style.display = 'block';
+        document.getElementById(cam.stopBtn).style.display = 'none';
+    }
 }
 
 function scanLoop() {
-    if (!scanning) return;
-    const video = document.getElementById('video');
+    if (!scanning || !cam) return;
+    const video = document.getElementById(cam.video);
     const canvas = document.getElementById('canvas');
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
         canvas.width = video.videoWidth;
