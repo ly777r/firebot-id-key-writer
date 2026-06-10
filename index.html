@@ -183,13 +183,18 @@ function camFor(target) {
 async function startScan(target) {
     scanTarget = target || 'ubilink';
     if (scanTarget === 'ubilink') resetUbilink(); // 扫新 ubilinkID 前清掉旧的
+    const wasRunning = !!videoStream;
     stopScan(); // 关掉可能在运行的另一个摄像头
+    // 若刚关掉另一个摄像头，等它释放再开新的，避免第二个画面黑屏
+    if (wasRunning) await new Promise(function (r) { setTimeout(r, 250); });
     cam = camFor(scanTarget);
     const video = document.getElementById(cam.video);
     try {
         videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         video.srcObject = videoStream;
         video.style.display = 'block';
+        video.muted = true;
+        await video.play().catch(function () {}); // 显式播放，避免黑屏
         scanning = true;
         document.getElementById(cam.startBtn).style.display = 'none';
         document.getElementById(cam.stopBtn).style.display = 'block';
